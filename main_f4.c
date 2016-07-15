@@ -17,9 +17,8 @@
 #include "bl.h"
 #include "uart.h"
 //#include "sdio.h"
- #include "ff.h"
- #include "SD_Card.h"
-
+#include "ff.h"
+#include "SD_Card.h"
 
 /* flash parameters that we should not really know */
 static struct {
@@ -160,8 +159,7 @@ static const clock_scale_t clock_setup = {
 };
 
 
-static uint32_t
-board_get_rtc_signature()
+static uint32_t board_get_rtc_signature()
 {
 	/* enable the backup registers */
 	PWR_CR |= PWR_CR_DBP;
@@ -176,8 +174,7 @@ board_get_rtc_signature()
 	return result;
 }
 
-static void
-board_set_rtc_signature(uint32_t sig)
+static void board_set_rtc_signature(uint32_t sig)
 {
 	/* enable the backup registers */
 	PWR_CR |= PWR_CR_DBP;
@@ -190,8 +187,7 @@ board_set_rtc_signature(uint32_t sig)
 	PWR_CR &= ~PWR_CR_DBP;
 }
 
-static bool
-board_test_force_pin()
+static bool board_test_force_pin()
 {
 #if defined(BOARD_FORCE_BL_PIN_IN) && defined(BOARD_FORCE_BL_PIN_OUT)
 	/* two pins strapped together */
@@ -309,8 +305,7 @@ board_test_usart_receiving_break()
 #endif
 
 
-static void
-board_init(void)
+static void board_init(void)
 {
 	/* fix up the max firmware size, we have to read memory to get this */
 	board_info.fw_size = APP_SIZE_MAX;
@@ -340,6 +335,7 @@ board_init(void)
 
 	/* configure USART clock */
 	rcc_peripheral_enable_clock(&BOARD_USART_CLOCK_REGISTER, BOARD_USART_CLOCK_BIT);
+
 #endif
 
 #if defined(BOARD_FORCE_BL_PIN_IN) && defined(BOARD_FORCE_BL_PIN_OUT)
@@ -376,8 +372,33 @@ board_init(void)
 	rcc_peripheral_enable_clock(&RCC_APB1ENR, RCC_APB1ENR_PWREN);
 }
 
-void
-board_deinit(void)
+void UART7_init(void)
+{
+	rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_IOPEEN);
+
+	/* Setup GPIO pins for USART transmit. */
+	gpio_mode_setup(GPIOE, GPIO_MODE_AF, GPIO_PUPD_PULLUP, GPIO8 | GPIO7);
+	/* Setup USART TX & RX pins as alternate function. */
+	gpio_set_af(GPIOE, GPIO_AF8, GPIO8);
+	gpio_set_af(GPIOE, GPIO_AF8, GPIO7);
+
+	/* configure USART clock */
+	rcc_peripheral_enable_clock(&RCC_APB1ENR, RCC_APB1ENR_UART7EN);
+
+	// open UART7
+	uart7_cinit(UART7);
+}
+
+void UART7_deinit(void)
+{
+	/* deinitialise GPIO pins for USART transmit. */
+	gpio_mode_setup(GPIOE, GPIO_MODE_INPUT, GPIO_PUPD_NONE, GPIO8 | GPIO7);
+
+	/* disable USART peripheral clock */
+	rcc_peripheral_disable_clock(&RCC_APB1ENR, RCC_APB1ENR_UART7EN);
+}
+
+void board_deinit(void)
 {
 #if INTERFACE_USB
 	/* deinitialise GPIO9 (used to sniff VBUS) */
@@ -422,8 +443,7 @@ board_deinit(void)
   *
   * @param  clock_setup : The clock configuration to set
   */
-static inline void
-clock_init(void)
+static inline void clock_init(void)
 {
 	rcc_clock_setup_hse_3v3(&clock_setup);
 }
@@ -653,11 +673,6 @@ led_toggle(unsigned led)
 
 void SD_upload()
 {
-
-}
-
-int main(void)
-{
 	uint32_t  program_addr=0x8004000;
 	FATFS  Fatfs;
 	FIL    file;
@@ -676,56 +691,46 @@ int main(void)
 	uint8_t  program[]="] \r\n programming :  [";
 	uint8_t Init_ok[]="Board Initializing   ......    OK  \r\n";
 	/* Enable the FPU before we hit any FP instructions */
-	SCB_CPACR |= ((3UL << 10 * 2) | (3UL << 11 * 2)); /* set CP10 Full Access and set CP11 Full Access */
-	board_init();
-	clock_init();
-	/* start the interface */
-#if INTERFACE_USART
-	cinit(BOARD_INTERFACE_CONFIG_USART, USART);
-#endif
-#if INTERFACE_USB
-	cinit(BOARD_INTERFACE_CONFIG_USB, USB);
-#endif
 
-	uart_cout( Init_ok, sizeof(Init_ok));
+	uart7_cout(UART7, Init_ok, sizeof(Init_ok));
 	while(SD_Init())               //初始化SD卡，成功返回值0，失败进入循环处理（按需更改）
 	{
-		uart_cout( sd_not_found, sizeof(sd_not_found));
+		uart7_cout(UART7, sd_not_found, sizeof(sd_not_found));
 		jump_to_app();
 		while(1);
 	}
 	Res=f_mount(&Fatfs,"",1);     //加载Fatfs文件系统，初始化盘符，默认为0
 	if(Res)                       //加载失败，处理函数按需更改
 	{
-		uart_cout( fail_mount, sizeof(fail_mount));
+		uart7_cout(UART7, fail_mount, sizeof(fail_mount));
 		jump_to_app();
 		while(1);
 	}
 	Res=f_open(&file,"old",FA_READ);//检查是否能打开“backup.bin”文件，如打开成功，则删除
 	if(Res==0)
 	{
-		uart_cout( old_file, sizeof(old_file));
+		uart7_cout(UART7, old_file, sizeof(old_file));
 		f_close (&file);
 		f_unlink("old");
 	}
 	Res=f_open(&file,"FW.bin",FA_READ);         //检查是否能打开“upgrade.bin”文件，如打开失败
 	if(Res)                      //打开失败，则判定为不更新固件，卸载fatfs，跳转至固件
 	{
-		uart_cout( no_file, sizeof(no_file));
+		uart7_cout(UART7, no_file, sizeof(no_file));
 		f_mount(0,"",1);
 		jump_to_app();
 		while(1);
 	}
 	flash_unlock();            //关闭flash写保护
-	uart_cout( erase_setor, sizeof(erase_setor));  //轮循擦除扇区，每擦除一个扇区，LED变化一次，并打印相应信息
+	uart7_cout(UART7, erase_setor, sizeof(erase_setor));  //轮循擦除扇区，每擦除一个扇区，LED变化一次，并打印相应信息
 	for ( i = 0; flash_func_sector_size(i) != 0; i++)
 	{
 		flash_func_erase_sector(i);
 		led_toggle( LED_BOOTLOADER);
-		uart_cout( block, sizeof(block));
+		uart7_cout(UART7, block, sizeof(block));
 	}
 	Res=0;
-	uart_cout( program, sizeof(program));      //开始写flash
+	uart7_cout(UART7, program, sizeof(program));      //开始写flash
 	do
 	{
 		if(f_read(&file,fatbuf ,512,&br)==0)   //读取成功
@@ -739,20 +744,196 @@ int main(void)
 		}
 		else                                   //读取失败，按需加入处理函数
 		{
-			uart_cout( fail_progm, sizeof(fail_progm));
+			uart7_cout(UART7, fail_progm, sizeof(fail_progm));
 			break;
 		}
 		if((Res%100)==0)                       //如果正好是100的倍数，即为50kb的倍数，串口发送一次状态数据，LED变化一次
 		{
-			uart_cout( block, sizeof(block));
+			uart7_cout(UART7, block, sizeof(block));
 			led_toggle( LED_BOOTLOADER);
 		}
 	}while(br==512);                           //当读取至文件末尾，退出
-	uart_cout(latter, sizeof(latter));
+	uart7_cout(UART7,latter, sizeof(latter));
 	flash_lock();                              //打开flash写保护
 	f_close (&file);                           //关闭文件
 	f_rename("FW.bin","old");                  //重命名固件为backup.bin
 	f_mount(0,"",1);                           //卸载文件系统
 	jump_to_app();                             //跳转至固件
 	while(1);
+}
+
+int main(void)
+{
+	bool try_boot = true;			/* try booting before we drop to the bootloader */
+	unsigned timeout = BOOTLOADER_DELAY;	/* if nonzero, drop out of the bootloader after this time */
+
+	/* Enable the FPU before we hit any FP instructions */
+	SCB_CPACR |= ((3UL << 10 * 2) | (3UL << 11 * 2)); /* set CP10 Full Access and set CP11 Full Access */
+
+	/* do board-specific initialisation */
+	board_init();   //初始化串口时钟，串口IO时钟，开启复用功能
+
+	/* configure the clock for bootloader activity */
+	clock_init();   //初始化时钟
+	UART7_init();
+	SD_upload();
+	/*
+	 * Check the force-bootloader register; if we find the signature there, don't
+	 * try booting.
+	 */
+	if (board_get_rtc_signature() == BOOT_RTC_SIGNATURE) {
+
+		/*
+		 * Don't even try to boot before dropping to the bootloader.
+		 */
+		try_boot = false;
+
+		/*
+		 * Don't drop out of the bootloader until something has been uploaded.
+		 */
+		timeout = 0;
+
+		/*
+		 * Clear the signature so that if someone resets us while we're
+		 * in the bootloader we'll try to boot next time.
+		 */
+		board_set_rtc_signature(0);
+	}
+
+#ifdef BOOT_DELAY_ADDRESS
+	{
+		/*
+		  if a boot delay signature is present then delay the boot
+		  by at least that amount of time in seconds. This allows
+		  for an opportunity for a companion computer to load a
+		  new firmware, while still booting fast by sending a BOOT
+		  command
+		 */
+		uint32_t sig1 = flash_func_read_word(BOOT_DELAY_ADDRESS);
+		uint32_t sig2 = flash_func_read_word(BOOT_DELAY_ADDRESS + 4);
+
+		if (sig2 == BOOT_DELAY_SIGNATURE2 &&
+		    (sig1 & 0xFFFFFF00) == (BOOT_DELAY_SIGNATURE1 & 0xFFFFFF00)) {
+			unsigned boot_delay = sig1 & 0xFF;
+
+			if (boot_delay <= BOOT_DELAY_MAX) {
+				try_boot = false;
+
+				if (timeout < boot_delay * 1000) {
+					timeout = boot_delay * 1000;
+				}
+			}
+		}
+	}
+#endif
+
+	/*
+	 * Check if the force-bootloader pins are strapped; if strapped,
+	 * don't try booting.
+	 */
+	if (board_test_force_pin()) {
+		try_boot = false;
+	}
+
+#if INTERFACE_USB
+
+	/*
+	 * Check for USB connection - if present, don't try to boot, but set a timeout after
+	 * which we will fall out of the bootloader.
+	 *
+	 * If the force-bootloader pins are tied, we will stay here until they are removed and
+	 * we then time out.
+	 */
+	if (gpio_get(GPIOA, GPIO9) != 0) {
+
+		/* don't try booting before we set up the bootloader */
+		try_boot = false;
+	}
+
+#endif
+
+#if INTERFACE_USART
+
+	/*
+	 * Check for if the USART port RX line is receiving a break command, or is being held low. If yes,
+	 * don't try to boot, but set a timeout after
+	 * which we will fall out of the bootloader.
+	 *
+	 * If the force-bootloader pins are tied, we will stay here until they are removed and
+	 * we then time out.
+	 */
+	if (board_test_usart_receiving_break()) {
+		try_boot = false;
+	}
+
+#endif
+
+	/* Try to boot the app if we think we should just go straight there */
+	if (try_boot) {
+
+		/* set the boot-to-bootloader flag so that if boot fails on reset we will stop here */
+#ifdef BOARD_BOOT_FAIL_DETECT
+		board_set_rtc_signature(BOOT_RTC_SIGNATURE);
+#endif
+
+		/* try to boot immediately */
+		jump_to_app();
+
+		// If it failed to boot, reset the boot signature and stay in bootloader
+		board_set_rtc_signature(BOOT_RTC_SIGNATURE);
+
+		/* booting failed, stay in the bootloader forever */
+		timeout = 0;
+	}
+
+
+	/* start the interface */
+#if INTERFACE_USART
+	cinit(BOARD_INTERFACE_CONFIG_USART, USART);
+#endif
+#if INTERFACE_USB
+	cinit(BOARD_INTERFACE_CONFIG_USB, USB);
+#endif
+
+
+#if 0
+	// MCO1/02
+	gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO8);
+	gpio_set_output_options(GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_100MHZ, GPIO8);
+	gpio_set_af(GPIOA, GPIO_AF0, GPIO8);
+	gpio_mode_setup(GPIOC, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO9);
+	gpio_set_af(GPIOC, GPIO_AF0, GPIO9);
+#endif
+
+
+	while (1) {
+		/* run the bootloader, come back after an app is uploaded or we time out */
+		bootloader(timeout);
+
+		/* if the force-bootloader pins are strapped, just loop back */
+		if (board_test_force_pin()) {
+			continue;
+		}
+
+#if INTERFACE_USART
+
+		/* if the USART port RX line is still receiving a break, just loop back */
+		if (board_test_usart_receiving_break()) {
+			continue;
+		}
+
+#endif
+
+		/* set the boot-to-bootloader flag so that if boot fails on reset we will stop here */
+#ifdef BOARD_BOOT_FAIL_DETECT
+		board_set_rtc_signature(BOOT_RTC_SIGNATURE);
+#endif
+
+		/* look to see if we can boot the app */
+		jump_to_app();
+
+		/* launching the app failed - stay in the bootloader forever */
+		timeout = 0;
+	}
+
 }

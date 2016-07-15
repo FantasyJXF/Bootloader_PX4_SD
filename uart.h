@@ -43,3 +43,8 @@ extern void uart_cinit(void *config);
 extern void uart_cfini(void);
 extern int uart_cin(void);
 extern void uart_cout(uint8_t *buf, unsigned len);
+
+extern void uart7_cinit(uint32_t whichUsart);
+extern void uart7_cfini(uint32_t whichUsart);
+extern int uart7_cin(uint32_t whichUsart);
+extern void uart7_cout(uint32_t whichUsart,uint8_t *buf,unsigned len);

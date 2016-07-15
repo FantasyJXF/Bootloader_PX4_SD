@@ -40,8 +40,7 @@
 
 uint32_t usart;
 
-void
-uart_cinit(void *config)
+void uart_cinit(void *config)
 {
 	usart = (uint32_t)config;
 
@@ -49,7 +48,7 @@ uart_cinit(void *config)
 
 	/* do usart setup */
 	//USART_CR1(usart) |= (1 << 15);	/* because libopencm3 doesn't know the OVER8 bit */
-	usart_set_baudrate(usart, 57600);
+	usart_set_baudrate(usart, 921600);
 	usart_set_databits(usart, 8);
 	usart_set_stopbits(usart, USART_STOPBITS_1);
 	usart_set_mode(usart, USART_MODE_TX_RX);
@@ -75,14 +74,52 @@ uart_cinit(void *config)
 #endif
 }
 
-void
-uart_cfini(void)
+void uart7_cinit(uint32_t whichUsart)
+{
+
+
+	/* board is expected to do pin and clock setup */
+
+	/* do usart setup */
+	//USART_CR1(usart) |= (1 << 15);	/* because libopencm3 doesn't know the OVER8 bit */
+	usart_set_baudrate(whichUsart, 57600);
+	usart_set_databits(whichUsart, 8);
+	usart_set_stopbits(whichUsart, USART_STOPBITS_1);
+	usart_set_mode(whichUsart, USART_MODE_TX_RX);
+	usart_set_parity(whichUsart, USART_PARITY_NONE);
+	usart_set_flow_control(whichUsart, USART_FLOWCONTROL_NONE);
+
+	/* and enable */
+	usart_enable(whichUsart);
+
+
+#if 0
+	usart_send_blocking(whichUsart, 'B');
+	usart_send_blocking(whichUsart, 'B');
+	usart_send_blocking(whichUsart, 'B');
+	usart_send_blocking(whichUsart, 'B');
+
+	while (true) {
+		int c;
+		c = usart_recv_blocking(whichUsart);
+		usart_send_blocking(whichUsart, c);
+	}
+
+#endif
+}
+
+
+void uart_cfini(void)
 {
 	usart_disable(usart);
 }
 
-int
-uart_cin(void)
+void uart7_cfini(uint32_t whichUsart)
+{
+	usart_disable(whichUsart);
+}
+
+int uart_cin(void)
 {
 	int c = -1;
 
@@ -93,12 +130,27 @@ uart_cin(void)
 	return c;
 }
 
-void
-uart_cout(uint8_t *buf, unsigned len)
+int uart7_cin(uint32_t whichUsart)
+{
+	int c = -1;
+	if (USART_SR(whichUsart) & USART_SR_RXNE) {
+	c = usart_recv(whichUsart);
+	}
+	return c;
+}
+
+void uart_cout(uint8_t *buf, unsigned len)
 {
 	//
 	while (len--) {
 		usart_send_blocking(usart, *buf++);
-		while(usart_get_flag(UART7, USART_SR_TC) !=1);
 	}
+}
+
+void uart7_cout(uint32_t whichUsart,uint8_t *buf,unsigned len)
+{
+	while (len--) {
+			usart_send_blocking(whichUsart, *buf++);
+			while(usart_get_flag(UART7, USART_SR_TC) !=1);
+		}
 }

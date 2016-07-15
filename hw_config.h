@@ -70,7 +70,7 @@
 # define APP_LOAD_ADDRESS               0x08004000
 # define BOOTLOADER_DELAY               5000
 # define BOARD_FMUV2
-# define INTERFACE_USB                  0
+# define INTERFACE_USB                  1
 # define INTERFACE_USART                1
 # define USBDEVICESTRING                "PX4 BL FMU v2.x"
 # define USBPRODUCTID                   0x0011
@@ -90,6 +90,9 @@
 # define BOARD_LED_ON                   gpio_clear
 # define BOARD_LED_OFF                  gpio_set
 
+// 串口7的一些宏定义
+// 串口7用于debug输出显示
+/*
 # define BOARD_USART  					UART7
 # define BOARD_USART_CLOCK_REGISTER 	RCC_APB1ENR
 # define BOARD_USART_CLOCK_BIT      	RCC_APB1ENR_UART7EN
@@ -100,6 +103,21 @@
 # define BOARD_PIN_RX		     		GPIO7
 # define BOARD_USART_PIN_CLOCK_REGISTER RCC_AHB1ENR
 # define BOARD_USART_PIN_CLOCK_BIT  	RCC_AHB1ENR_IOPEEN
+*/
+
+// 串口3的一些宏定义
+// 串口3用于Bootloader的通信
+
+# define BOARD_USART  					USART3
+# define BOARD_USART_CLOCK_REGISTER 	RCC_APB1ENR
+# define BOARD_USART_CLOCK_BIT      	RCC_APB1ENR_USART3EN
+
+# define BOARD_PORT_USART   			GPIOD
+# define BOARD_PORT_USART_AF 			GPIO_AF7
+# define BOARD_PIN_TX     				GPIO8
+# define BOARD_PIN_RX		     		GPIO9
+# define BOARD_USART_PIN_CLOCK_REGISTER RCC_AHB1ENR
+# define BOARD_USART_PIN_CLOCK_BIT  	RCC_AHB1ENR_IOPDEN
 
 /*
  * Uncommenting this allows to force the bootloader through
