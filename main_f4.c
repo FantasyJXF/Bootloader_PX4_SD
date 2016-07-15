@@ -651,6 +651,10 @@ led_toggle(unsigned led)
 # define SCB_CPACR (*((volatile uint32_t *) (((0xE000E000UL) + 0x0D00UL) + 0x088)))
 #endif
 
+void SD_upload()
+{
+
+}
 
 int main(void)
 {
