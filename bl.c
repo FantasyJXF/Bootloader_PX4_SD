@@ -610,7 +610,9 @@ bootloader(unsigned timeout)
 			// clear the bootloader LED while erasing - it stops blinking at random
 			// and that's confusing
 			led_set(LED_ON);
-
+			//备份芯片数据至SD
+			read_chip_to_sd();
+			//备份芯片数据至SD
 			// erase all sectors
 			flash_unlock();
 

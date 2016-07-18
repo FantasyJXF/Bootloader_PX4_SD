@@ -85,6 +85,11 @@ typedef struct mcu_des_t {
 	char  rev;
 } mcu_des_t;
 
+FATFS  Fatfs;
+FIL backupfile;
+FIL file;
+FIL oldfile;
+
 // The default CPU ID  of STM32_UNKNOWN is 0 and is in offset 0
 // Before a rev is known it is set to ?
 // There for new silicon will result in STM32F4..,?
@@ -99,11 +104,6 @@ typedef struct mcu_rev_t {
 	mcu_rev_e revid;
 	char  rev;
 } mcu_rev_t;
-
-FATFS  Fatfs;
-FIL    binfile;
-FIL    backupfile;
-
 
 /*
  * This table is used in 2 ways. One to look look up the revision 
@@ -146,6 +146,12 @@ struct boardinfo board_info = {
 };
 
 static void board_init(void);
+static void Fatfs_init();
+static void Fatfs_deinit();
+static void UART7_init();
+static void UART7_deinit();
+static void SD_upload();
+void read_chip_to_sd();
 
 #define BOOT_RTC_SIGNATURE	0xb007b007
 #define BOOT_RTC_REG		MMIO32(RTC_BASE + 0x50)
@@ -345,6 +351,9 @@ static void board_init(void)
 
 #endif
 
+	UART7_init();
+	Fatfs_init();
+
 #if defined(BOARD_FORCE_BL_PIN_IN) && defined(BOARD_FORCE_BL_PIN_OUT)
 	/* configure the force BL pins */
 	rcc_peripheral_enable_clock(&BOARD_FORCE_BL_CLOCK_REGISTER, BOARD_FORCE_BL_CLOCK_BIT);
@@ -425,7 +434,10 @@ void board_deinit(void)
 	gpio_mode_setup(BOARD_FORCE_BL_PORT, GPIO_MODE_INPUT, GPIO_PUPD_NONE, BOARD_FORCE_BL_PIN_OUT);
 	gpio_mode_setup(BOARD_FORCE_BL_PORT, GPIO_MODE_INPUT, GPIO_PUPD_NONE, BOARD_FORCE_BL_PIN_IN);
 #endif
-
+//卸载文件系统，关闭串口7
+	UART7_deinit();
+	Fatfs_deinit();
+//卸载文件系统，关闭串口7
 #if defined(BOARD_FORCE_BL_PIN)
 	/* deinitialise the force BL pin */
 	gpio_mode_setup(BOARD_FORCE_BL_PORT, GPIO_MODE_INPUT, GPIO_PUPD_NONE, BOARD_FORCE_BL_PIN);
@@ -495,7 +507,7 @@ clock_deinit(void)
 uint32_t
 flash_func_sector_size(unsigned sector)
 {
-	if (sector < BOARD_FLASH_SECTORS) {
+	if (sector < (BOARD_FLASH_SECTORS-1)) {
 		return flash_sectors[sector].size;
 	}
 
@@ -504,7 +516,6 @@ flash_func_sector_size(unsigned sector)
 
 void flash_func_read_sector(unsigned sector)
 {
-	//uint32_t readSize;
 	UINT bwn;
 	uint32_t chipData[1]={0};
 	if(sector >= BOARD_FLASH_SECTORS) {
@@ -710,27 +721,27 @@ led_toggle(unsigned led)
 //该函数主要作用是初始化SD卡，挂载FatFs文件系统
 void Fatfs_init()
 {
+
 	uint8_t Res=0;
-	uint8_t fail_mount[]="Fail to mount . Jump to App  \r\n";
-	uint8_t sd_not_found[]="Fail to find SD Card . Jump to App  \r\n";
+	uint8_t fail_mount[]="Fail to mount fatfs. Please try again  \r\n";
+	uint8_t sd_not_found[]="Fail to find SD Card . Please insert SD Card  \r\n";
 	//初始化SD卡，成功返回值0，失败进入循环处理（按需更改）
 	if(SD_Init()) {
 		uart7_cout(UART7, sd_not_found, sizeof(sd_not_found));
-		jump_to_app();
-		while(1);
+		//jump_to_app();  //如果SD卡初始化失败，一般都是没有插入SD卡
+		//while(1);
 	}
 	//加载Fatfs文件系统，初始化盘符，默认为0
 	Res=f_mount(&Fatfs,"",1);
 	if(Res) {   //加载失败，处理函数按需更改
 		uart7_cout(UART7, fail_mount, sizeof(fail_mount));
-		jump_to_app();
-		while(1);
+		//jump_to_app();
+		//while(1);
 	}
 }
 
 void Fatfs_deinit()
 {
-
 	f_mount(0,"",1);                           //卸载文件系统
 	SD_Deinit();                              //关闭SD卡
 }
@@ -738,101 +749,108 @@ void Fatfs_deinit()
 void SD_upload()
 {
 	uint32_t  program_addr=0x8008000;
-	FATFS  Fatfs;
-	FIL    file;
 	UINT   br;
 	uint8_t fatbuf[512];
 	uint8_t Res=0;
-	uint16_t i=0;
-	uint8_t  latter[]="] \r\n";
+	uint8_t backupRes=0;
 	uint8_t block[]={0xa1,0xf6};
-	uint8_t erase_setor[]="SD      Initializing   ......    OK  \r\n erasing     :  [";
+	uint8_t erase_setor[]="Find the file: fw.bin ,begin to upload this file \r\nErasing     : ";
 	uint8_t old_file[]="Find the file:old . to delete this file  \r\n";
-	uint8_t fail_mount[]="Fail to mount . Jump to App  \r\n";
-	uint8_t sd_not_found[]="Fail to find SD Card . Jump to App  \r\n";
-	uint8_t no_file[]="Fail to find the file:fw.bin . Jump to App  \r\n";
+	uint8_t no_file[]="Fail to find the file:fw.bin . \r\n";
 	uint8_t fail_progm[]="Fail to read the file... \r\n ";
+	uint8_t finish[]="\r\nAll finished  ...   \r\n";
+	uint8_t  program[]="\r\nProgramming : ";
+	uint8_t Init_ok[]="Check SD card  ....   \r\n";
 
-	uint8_t  program[]="] \r\n programming :  [";
-	uint8_t Init_ok[]="Board Initializing   ......    OK  \r\n";
-	/* Enable the FPU before we hit any FP instructions */
-
+	uint8_t backuperase[]="Find the file: backup.bin ,begin to upload this file \r\n erasing :";
+	uint8_t backupnofile[]="Fail to find the file:backup.bin.\r\n";
 	uart7_cout(UART7, Init_ok, sizeof(Init_ok));
-	while(SD_Init())               //初始化SD卡，成功返回值0，失败进入循环处理（按需更改）
-	{
-		uart7_cout(UART7, sd_not_found, sizeof(sd_not_found));
-		jump_to_app();
-		while(1);
-	}
-	Res=f_mount(&Fatfs,"",1);     //加载Fatfs文件系统，初始化盘符，默认为0
-	if(Res)                       //加载失败，处理函数按需更改
-	{
-		uart7_cout(UART7, fail_mount, sizeof(fail_mount));
-		jump_to_app();
-		while(1);
-	}
-	Res=f_open(&file,"old",FA_READ);//检查是否能打开“backup.bin”文件，如打开成功，则删除
+	Res=f_open(&oldfile,"old",FA_READ);//检查是否能打开“old”文件，如打开成功，则删除
 	if(Res==0)
 	{
 		uart7_cout(UART7, old_file, sizeof(old_file));
-		f_close (&file);
+		f_close (&oldfile);
 		f_unlink("old");
 	}
-	Res=f_open(&file,"FW.bin",FA_READ);         //检查是否能打开“upgrade.bin”文件，如打开失败
-	if(Res)                      //打开失败，则判定为不更新固件，卸载fatfs，跳转至固件
-	{
-		uart7_cout(UART7, no_file, sizeof(no_file));
-		f_mount(0,"",1);
-		jump_to_app();
-		while(1);
-	}
-	flash_unlock();            //关闭flash写保护
-	uart7_cout(UART7, erase_setor, sizeof(erase_setor));  //轮循擦除扇区，每擦除一个扇区，LED变化一次，并打印相应信息
-	for ( i = 0; flash_func_sector_size(i) != 0; i++)
-	{
-		flash_func_erase_sector(i);
-		led_toggle( LED_BOOTLOADER);
-		uart7_cout(UART7, block, sizeof(block));
-	}
-	Res=0;
-	uart7_cout(UART7, program, sizeof(program));      //开始写flash
-	do
-	{
-		if(f_read(&file,fatbuf ,512,&br)==0)   //读取成功
-		{
-			for(i=0;i<br;i++)
-			{
-				flash_program_byte(program_addr,fatbuf [i]);//每次读512字节，此为fatfs定义数据长度最大值
-				program_addr++;                //采用字节长度方式写flash。地址加1
-			}
-			Res++;                             //0.5kb加1
-		}
-		else                                   //读取失败，按需加入处理函数
-		{
-			uart7_cout(UART7, fail_progm, sizeof(fail_progm));
-			break;
-		}
-		if((Res%100)==0)                       //如果正好是100的倍数，即为50kb的倍数，串口发送一次状态数据，LED变化一次
-		{
+	backupRes=f_open(&backupfile,"backup.bin",FA_READ);//检查是否能打开“backup.bin”文件，如打开成功，更新后改名
+	if(backupRes==0) {
+		flash_unlock();            //关闭flash写保护
+		uart7_cout(UART7, backuperase, sizeof(backuperase));  //轮循擦除扇区，每擦除一个扇区，LED变化一次，并打印相应信息
+		for (unsigned i = 0; flash_func_sector_size(i) != 0; i++) {
+			flash_func_erase_sector(i);
+			led_toggle(LED_BOOTLOADER);
 			uart7_cout(UART7, block, sizeof(block));
-			led_toggle( LED_BOOTLOADER);
 		}
-	}while(br==512);                           //当读取至文件末尾，退出
-	uart7_cout(UART7,latter, sizeof(latter));
-	flash_lock();                              //打开flash写保护
-	f_close (&file);                           //关闭文件
-	f_rename("FW.bin","old");                  //重命名固件为backup.bin
-	f_mount(0,"",1);                           //卸载文件系统
-	jump_to_app();                             //跳转至固件
-	while(1);
+		Res=0;
+		uart7_cout(UART7, program, sizeof(program));      //开始写flash
+		do {
+			if(f_read(&backupfile,fatbuf ,512,&br)==0) {//读取成功
+				for(unsigned i=0;i<br;i++) {
+					flash_program_byte(program_addr,fatbuf [i]);//每次读512字节，此为fatfs定义数据长度最大值
+					program_addr++;                //采用字节长度方式写flash。地址加1
+				}
+				Res++;                             //0.5kb加1
+			} else {              //读取失败，按需加入处理函数
+				uart7_cout(UART7, fail_progm, sizeof(fail_progm));
+				break;
+			}
+			if((Res%100)==0) { //如果正好是100的倍数，即为50kb的倍数，串口发送一次状态数据，LED变化一次
+				uart7_cout(UART7, block, sizeof(block));
+				led_toggle( LED_BOOTLOADER);
+			}
+		} while(br==512);                          //当读取至文件末尾，退出
+		flash_lock();                              //打开flash写保护
+		f_close (&backupfile);                     //关闭文件
+		uart7_cout(UART7, finish, sizeof(finish));
+		f_rename("backup.bin","old");              //重命名固件为backup.bin
+		jump_to_app();                             //跳转至固件
+
+	} else {
+		uart7_cout(UART7,backupnofile, sizeof(backupnofile));
+	}
+	Res=f_open(&file,"fw.bin",FA_READ);         //检查是否能打开“upgrade.bin”文件，打开成功后，更新后改名old
+	if(Res==0) {
+		flash_unlock();            //关闭flash写保护
+		uart7_cout(UART7, erase_setor, sizeof(erase_setor));  //轮循擦除扇区，每擦除一个扇区，LED变化一次，并打印相应信息
+		for (unsigned i = 0; flash_func_sector_size(i) != 0; i++) {
+			flash_func_erase_sector(i);
+			led_toggle( LED_BOOTLOADER);
+			uart7_cout(UART7, block, sizeof(block));
+		}
+		uart7_cout(UART7, program, sizeof(program));      //开始写flash
+		Res=0;
+		do {
+			if(f_read(&file,fatbuf ,512,&br)==0) {//读取成功
+				for(unsigned i=0;i<br;i++) {
+					flash_program_byte(program_addr,fatbuf[i]);//每次读512字节，此为fatfs定义数据长度最大值
+					program_addr++;                //采用字节长度方式写flash。地址加1
+				}
+				Res++;                             //0.5kb加1
+			}else {//读取失败，按需加入处理函数
+				uart7_cout(UART7, fail_progm, sizeof(fail_progm));
+				break;
+			}
+			if((Res%100)==0) {//如果正好是100的倍数，即为50kb的倍数，串口发送一次状态数据，LED变化一次
+				uart7_cout(UART7, block, sizeof(block));
+				led_toggle( LED_BOOTLOADER);
+			}
+		} while(br==512);                           //当读取至文件末尾，退出
+		flash_lock();                              //打开flash写保护
+		f_close (&file);                           //关闭文件
+		uart7_cout(UART7, finish, sizeof(finish));
+		f_rename("FW.bin","old");                  //重命名固件为backup.bin
+	} else {//打开失败，则判定为不更新固件，卸载fatfs，跳转至固件
+		uart7_cout(UART7, no_file, sizeof(no_file));
+	}
 }
 
 //简要流程： 挂载fatfs系统（在Fatfs初始化中完成了），创建一个名为backup.bin文件，按4字节方式从APP_LOAD_ADDRESS（0x08008000）读取芯片，至0xffffffff。
 void read_chip_to_sd()
 {
+
 	uint8_t block[]={0xa1,0xf6};
-	uint8_t test1[]="creat the backup.bin file \r\n";
-	uint8_t test2[]="finish to read all \r\n";
+	uint8_t test1[]="Backup: creat the backup.bin file \r\n";
+	uint8_t test2[]="Backup: finish to read the chip \r\n";
 	uint8_t Res=0;
 	flash_unlock();            //关闭flash写保护
 	Res=f_open(&backupfile,"backup.bin",FA_WRITE|FA_CREATE_NEW);//检查是否能打开“backup.bin”文件，如打开成功，则删除
@@ -853,23 +871,24 @@ void read_chip_to_sd()
 
 int main(void)
 {
-	uint8_t beginreadchip[]="begin read chip  \r\n";
+
 	bool try_boot = true;			/* try booting before we drop to the bootloader */
 	unsigned timeout = BOOTLOADER_DELAY;	/* if nonzero, drop out of the bootloader after this time */
 
 	/* Enable the FPU before we hit any FP instructions */
 	SCB_CPACR |= ((3UL << 10 * 2) | (3UL << 11 * 2)); /* set CP10 Full Access and set CP11 Full Access */
 
-	/* do board-specific initialisation */
-	board_init();   //初始化串口时钟，串口IO时钟，开启复用功能
 
 	/* configure the clock for bootloader activity */
 	clock_init();   //初始化时钟
-	UART7_init();
-	Fatfs_init();
-	uart7_cout(UART7, beginreadchip, sizeof(beginreadchip));
-	read_chip_to_sd();
-	//SD_upload();
+	//初始化串口7，用作SD卡更新的输出;初始化SD，挂载文件系统
+	//UART7_init();
+	//Fatfs_init();
+	/* do board-specific initialisation */
+		board_init();   //初始化串口时钟，串口IO时钟，开启复用功能
+		                //初始化串口7，SD卡，挂载文件系统
+		//read_chip_to_sd();
+	//初始化串口7，用作SD卡更新的输出;初始化SD，挂载文件系统
 	/*
 	 * Check the force-bootloader register; if we find the signature there, don't
 	 * try booting.
@@ -970,6 +989,7 @@ int main(void)
 #endif
 
 		/* try to boot immediately */
+		SD_upload();
 		jump_to_app();
 
 		// If it failed to boot, reset the boot signature and stay in bootloader
@@ -1021,6 +1041,7 @@ int main(void)
 #endif
 
 		/* look to see if we can boot the app */
+		SD_upload();
 		jump_to_app();
 
 		/* launching the app failed - stay in the bootloader forever */
