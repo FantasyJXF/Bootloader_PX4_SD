@@ -20,13 +20,15 @@
 #include "ff.h"
 #include "SD_Card.h"
 
+uint32_t blankFlag=0;
 /* flash parameters that we should not really know */
 static struct {
 	uint32_t	sector_number;
 	uint32_t	size;
 } flash_sectors[] = {
 	/* flash sector zero reserved for bootloader */
-	{0x01, 16 * 1024},
+	//{0x00, 16 * 1024},            //first 16KB is for bootloader
+	//{0x01, 16 * 1024},           //BL_size  11
 	{0x02, 16 * 1024},
 	{0x03, 16 * 1024},
 	{0x04, 64 * 1024},
@@ -37,7 +39,7 @@ static struct {
 	{0x09, 128 * 1024},
 	{0x0a, 128 * 1024},
 	{0x0b, 128 * 1024},
-	/* flash sectors only in 2MiB devices */
+	/* flash sectors only in 2MiB devices */ //12
 	{0x10, 16 * 1024},
 	{0x11, 16 * 1024},
 	{0x12, 16 * 1024},
@@ -51,7 +53,7 @@ static struct {
 	{0x1a, 128 * 1024},
 	{0x1b, 128 * 1024},
 };
-#define BOOTLOADER_RESERVATION_SIZE	(16 * 1024)
+#define BOOTLOADER_RESERVATION_SIZE	(32 * 1024)    //BL_size
 
 #define OTP_BASE			0x1fff7800
 #define OTP_SIZE			512
@@ -97,6 +99,11 @@ typedef struct mcu_rev_t {
 	mcu_rev_e revid;
 	char  rev;
 } mcu_rev_t;
+
+FATFS  Fatfs;
+FIL    binfile;
+FIL    backupfile;
+
 
 /*
  * This table is used in 2 ways. One to look look up the revision 
@@ -495,6 +502,34 @@ flash_func_sector_size(unsigned sector)
 	return 0;
 }
 
+void flash_func_read_sector(unsigned sector)
+{
+	//uint32_t readSize;
+	UINT bwn;
+	uint32_t chipData[1]={0};
+	if(sector >= BOARD_FLASH_SECTORS) {
+		return;    //如果要求读取的sector超过芯片固有的就返回
+	}
+
+	//得到sector的相对偏移地址
+	uint32_t address =0;
+
+	for (unsigned i = 0; i < sector; i++) {
+		address +=flash_func_sector_size(i);
+	}
+
+
+	uint32_t size = flash_func_sector_size(sector);    //得到当前sector的大小
+	//检查这个sector是否是空
+	if((flash_func_read_word(address)==0xffffffff)&&(flash_func_read_word(address+4)==0xffffffff)&&(flash_func_read_word(address+16)==0xffffffff)) {
+		blankFlag=1;
+		return;
+	}
+	for(uint32_t i=0; i <size;i += sizeof(uint32_t)) {
+		chipData[0]=flash_func_read_word(address+i);
+		f_write (&backupfile,chipData,4,&bwn);
+	}
+}
 void
 flash_func_erase_sector(unsigned sector)
 {
@@ -540,6 +575,7 @@ flash_func_read_word(uint32_t address)
 
 	return *(uint32_t *)(address + APP_LOAD_ADDRESS);
 }
+
 
 uint32_t
 flash_func_read_otp(uint32_t address)
@@ -671,9 +707,37 @@ led_toggle(unsigned led)
 # define SCB_CPACR (*((volatile uint32_t *) (((0xE000E000UL) + 0x0D00UL) + 0x088)))
 #endif
 
+//该函数主要作用是初始化SD卡，挂载FatFs文件系统
+void Fatfs_init()
+{
+	uint8_t Res=0;
+	uint8_t fail_mount[]="Fail to mount . Jump to App  \r\n";
+	uint8_t sd_not_found[]="Fail to find SD Card . Jump to App  \r\n";
+	//初始化SD卡，成功返回值0，失败进入循环处理（按需更改）
+	if(SD_Init()) {
+		uart7_cout(UART7, sd_not_found, sizeof(sd_not_found));
+		jump_to_app();
+		while(1);
+	}
+	//加载Fatfs文件系统，初始化盘符，默认为0
+	Res=f_mount(&Fatfs,"",1);
+	if(Res) {   //加载失败，处理函数按需更改
+		uart7_cout(UART7, fail_mount, sizeof(fail_mount));
+		jump_to_app();
+		while(1);
+	}
+}
+
+void Fatfs_deinit()
+{
+
+	f_mount(0,"",1);                           //卸载文件系统
+	SD_Deinit();                              //关闭SD卡
+}
+
 void SD_upload()
 {
-	uint32_t  program_addr=0x8004000;
+	uint32_t  program_addr=0x8008000;
 	FATFS  Fatfs;
 	FIL    file;
 	UINT   br;
@@ -685,9 +749,10 @@ void SD_upload()
 	uint8_t erase_setor[]="SD      Initializing   ......    OK  \r\n erasing     :  [";
 	uint8_t old_file[]="Find the file:old . to delete this file  \r\n";
 	uint8_t fail_mount[]="Fail to mount . Jump to App  \r\n";
+	uint8_t sd_not_found[]="Fail to find SD Card . Jump to App  \r\n";
 	uint8_t no_file[]="Fail to find the file:fw.bin . Jump to App  \r\n";
 	uint8_t fail_progm[]="Fail to read the file... \r\n ";
-	uint8_t sd_not_found[]="Fail to find SD Card . Jump to App  \r\n";
+
 	uint8_t  program[]="] \r\n programming :  [";
 	uint8_t Init_ok[]="Board Initializing   ......    OK  \r\n";
 	/* Enable the FPU before we hit any FP instructions */
@@ -762,8 +827,33 @@ void SD_upload()
 	while(1);
 }
 
+//简要流程： 挂载fatfs系统（在Fatfs初始化中完成了），创建一个名为backup.bin文件，按4字节方式从APP_LOAD_ADDRESS（0x08008000）读取芯片，至0xffffffff。
+void read_chip_to_sd()
+{
+	uint8_t block[]={0xa1,0xf6};
+	uint8_t test1[]="creat the backup.bin file \r\n";
+	uint8_t test2[]="finish to read all \r\n";
+	uint8_t Res=0;
+	flash_unlock();            //关闭flash写保护
+	Res=f_open(&backupfile,"backup.bin",FA_WRITE|FA_CREATE_NEW);//检查是否能打开“backup.bin”文件，如打开成功，则删除
+	if(Res==0) {              //backup.bin 文件创建成功
+		uart7_cout(UART7, test1, sizeof(test1));
+		for (unsigned i = 0; flash_func_sector_size(i) != 0; i++) {
+			flash_func_read_sector(i);
+			uart7_cout(UART7, block, sizeof(block));
+			if(blankFlag==1) {
+				break;       //读取至chip的末尾，跳出
+			}
+		}
+	}
+	flash_lock();           //开启flash写保护
+	f_close(&backupfile);
+	uart7_cout(UART7, test2, sizeof(test2));
+}
+
 int main(void)
 {
+	uint8_t beginreadchip[]="begin read chip  \r\n";
 	bool try_boot = true;			/* try booting before we drop to the bootloader */
 	unsigned timeout = BOOTLOADER_DELAY;	/* if nonzero, drop out of the bootloader after this time */
 
@@ -776,7 +866,10 @@ int main(void)
 	/* configure the clock for bootloader activity */
 	clock_init();   //初始化时钟
 	UART7_init();
-	SD_upload();
+	Fatfs_init();
+	uart7_cout(UART7, beginreadchip, sizeof(beginreadchip));
+	read_chip_to_sd();
+	//SD_upload();
 	/*
 	 * Check the force-bootloader register; if we find the signature there, don't
 	 * try booting.
@@ -886,7 +979,6 @@ int main(void)
 		timeout = 0;
 	}
 
-
 	/* start the interface */
 #if INTERFACE_USART
 	cinit(BOARD_INTERFACE_CONFIG_USART, USART);
@@ -894,7 +986,6 @@ int main(void)
 #if INTERFACE_USB
 	cinit(BOARD_INTERFACE_CONFIG_USB, USB);
 #endif
-
 
 #if 0
 	// MCO1/02

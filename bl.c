@@ -245,13 +245,13 @@ void
 jump_to_app()
 {
 
-	const uint32_t *app_base = (const uint32_t *)APP_LOAD_ADDRESS;
+	const uint32_t *app_base = (const uint32_t *)APP_LOAD_ADDRESS;    //APP_LOAD_ADDRESS=0x8008000
 
 	/*
 	 * We refuse to program the first word of the app until the upload is marked
 	 * complete by the host.  So if it's not 0xffffffff, we should try booting it.
 	 */
-	if (app_base[0] == 0xffffffff) {
+	if (app_base[0] == 0xffffffff) { //0x20XXXXXX
 		return;
 	}
 
@@ -277,7 +277,6 @@ jump_to_app()
 
 	/* deinitialise the interface */
 	cfini();
-	SD_Deinit();
 	/* reset the clock */
 	clock_deinit();
 
