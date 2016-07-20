@@ -730,13 +730,14 @@ void Fatfs_init()
 		uart7_cout(UART7, sd_not_found, sizeof(sd_not_found));
 		//jump_to_app();  //如果SD卡初始化失败，一般都是没有插入SD卡
 		//while(1);
-	}
-	//加载Fatfs文件系统，初始化盘符，默认为0
-	Res=f_mount(&Fatfs,"",1);
-	if(Res) {   //加载失败，处理函数按需更改
-		uart7_cout(UART7, fail_mount, sizeof(fail_mount));
-		//jump_to_app();
-		//while(1);
+	} else {
+		//加载Fatfs文件系统，初始化盘符，默认为0
+		Res=f_mount(&Fatfs,"",1);
+		if(Res) {   //加载失败，处理函数按需更改
+			uart7_cout(UART7, fail_mount, sizeof(fail_mount));
+			//jump_to_app();
+			//while(1);
+		}
 	}
 }
 
@@ -762,7 +763,7 @@ void SD_upload()
 	uint8_t  program[]="\r\nProgramming : ";
 	uint8_t Init_ok[]="Check SD card  ....   \r\n";
 
-	uint8_t backuperase[]="Find the file: backup.bin ,begin to upload this file \r\n erasing :";
+	uint8_t backuperase[]="Find the file: backup.bin ,begin to upload this file \r\nErasing     :";
 	uint8_t backupnofile[]="Fail to find the file:backup.bin.\r\n";
 	uart7_cout(UART7, Init_ok, sizeof(Init_ok));
 	Res=f_open(&oldfile,"old",FA_READ);//检查是否能打开“old”文件，如打开成功，则删除
@@ -802,12 +803,13 @@ void SD_upload()
 		flash_lock();                              //打开flash写保护
 		f_close (&backupfile);                     //关闭文件
 		uart7_cout(UART7, finish, sizeof(finish));
-		f_rename("backup.bin","old");              //重命名固件为backup.bin
+		f_unlink("backup.bin");
 		jump_to_app();                             //跳转至固件
-
 	} else {
 		uart7_cout(UART7,backupnofile, sizeof(backupnofile));
 	}
+
+
 	Res=f_open(&file,"fw.bin",FA_READ);         //检查是否能打开“upgrade.bin”文件，打开成功后，更新后改名old
 	if(Res==0) {
 		flash_unlock();            //关闭flash写保护
@@ -852,6 +854,7 @@ void read_chip_to_sd()
 	uint8_t test1[]="Backup: creat the backup.bin file \r\n";
 	uint8_t test2[]="Backup: finish to read the chip \r\n";
 	uint8_t Res=0;
+	uint8_t unlinkflag=0;
 	flash_unlock();            //关闭flash写保护
 	Res=f_open(&backupfile,"backup.bin",FA_WRITE|FA_CREATE_NEW);//检查是否能打开“backup.bin”文件，如打开成功，则删除
 	if(Res==0) {              //backup.bin 文件创建成功
@@ -865,13 +868,14 @@ void read_chip_to_sd()
 		}
 	}
 	flash_lock();           //开启flash写保护
+	if(f_size(&backupfile)==0) unlinkflag=1;   //如果文件为空就删除
 	f_close(&backupfile);
+	if(unlinkflag==1) f_unlink("backup.bin");
 	uart7_cout(UART7, test2, sizeof(test2));
 }
 
 int main(void)
 {
-
 	bool try_boot = true;			/* try booting before we drop to the bootloader */
 	unsigned timeout = BOOTLOADER_DELAY;	/* if nonzero, drop out of the bootloader after this time */
 
@@ -893,6 +897,7 @@ int main(void)
 	 * Check the force-bootloader register; if we find the signature there, don't
 	 * try booting.
 	 */
+
 	if (board_get_rtc_signature() == BOOT_RTC_SIGNATURE) {
 
 		/*

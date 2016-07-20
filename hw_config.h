@@ -68,8 +68,9 @@
 #elif  defined(TARGET_HW_PX4_FMU_V2)
 
 # define APP_LOAD_ADDRESS               0x08008000      //BL_size
+# define UPLOAD_FLAG_ADDRESS            0x08007ffc
 # define BOOTLOADER_DELAY               5000
-# define BOARD_FMUV2
+# define BOARD_FMUV2A
 # define INTERFACE_USB                  1
 # define INTERFACE_USART                1
 # define USBDEVICESTRING                "PX4 BL FMU v2.x"

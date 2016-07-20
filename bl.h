@@ -66,6 +66,7 @@ extern void bootloader(unsigned timeout);
 extern void delay(unsigned msec);
 extern void read_chip_to_sd();
 
+
 #define BL_WAIT_MAGIC	0x19710317		/* magic number in PWR regs to wait in bootloader */
 
 /* generic timers */

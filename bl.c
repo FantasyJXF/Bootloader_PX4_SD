@@ -53,6 +53,7 @@
 #include "bl.h"
 #include "cdcacm.h"
 #include "uart.h"
+#include "ff.h"
 #include "SD_Card.h"
 
 // bootloader flash update protocol.
@@ -117,6 +118,7 @@
 
 static uint8_t bl_type;
 static uint8_t last_input;
+extern FIL backupfile;
 
 inline void cinit(void *config, uint8_t interface)
 {
@@ -611,7 +613,11 @@ bootloader(unsigned timeout)
 			// and that's confusing
 			led_set(LED_ON);
 			//备份芯片数据至SD
-			read_chip_to_sd();
+			if(f_open(&backupfile,"backup.bin",FA_READ)) {   //如果没有backup.bin,就backup一次。
+				read_chip_to_sd();
+			} else {  //如果存在，就关闭它，继续擦除
+				f_close(&backupfile);
+			}
 			//备份芯片数据至SD
 			// erase all sectors
 			flash_unlock();
@@ -884,7 +890,7 @@ bootloader(unsigned timeout)
 				// revert in case the flash was bad...
 				first_word = 0xffffffff;
 			}
-
+			f_unlink("backup.bin");
 			// send a sync and wait for it to be collected
 			sync_response();
 			delay(100);
