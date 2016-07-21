@@ -507,7 +507,8 @@ clock_deinit(void)
 uint32_t
 flash_func_sector_size(unsigned sector)
 {
-	if (sector < (BOARD_FLASH_SECTORS-1)) {
+	if (sector < (BOARD_FLASH_SECTORS)) {
+	//if (sector < (BOARD_FLASH_SECTORS-1)) {  //这样ＯＫ
 		return flash_sectors[sector].size;
 	}
 

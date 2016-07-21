@@ -116,6 +116,11 @@
 #define PROTO_DEVICE_FW_SIZE	4	// size of flashable area
 #define PROTO_DEVICE_VEC_AREA	5	// contents of reserved vectors 7-10
 
+//自定义
+#define BACKUP_OK_RESPONSE 0x40        //backupok+ok   0x40+0x10
+#define BACKUP_ALREADY_RESPONSE 0x41   //backupalready+ok  0x41+0x10
+//自定义
+
 static uint8_t bl_type;
 static uint8_t last_input;
 extern FIL backupfile;
@@ -338,6 +343,27 @@ led_set(enum led_state state)
 		timer[TIMER_LED] = 0;
 		break;
 	}
+}
+
+static void
+backupok_response(void)
+{
+	uint8_t data[] = {
+			BACKUP_OK_RESPONSE,	// "BACKUPOK"
+			PROTO_OK	// "OK"
+		};
+
+	cout(data, sizeof(data));
+}
+
+static void
+backupalready_response(void)
+{
+	uint8_t data[] = {
+			BACKUP_ALREADY_RESPONSE,	// "BACKUPALREDY"
+			PROTO_OK	// "OK"
+		};
+	cout(data, sizeof(data));
 }
 
 static void
@@ -615,8 +641,10 @@ bootloader(unsigned timeout)
 			//备份芯片数据至SD
 			if(f_open(&backupfile,"backup.bin",FA_READ)) {   //如果没有backup.bin,就backup一次。
 				read_chip_to_sd();
+				backupok_response();
 			} else {  //如果存在，就关闭它，继续擦除
 				f_close(&backupfile);
+				backupalready_response();
 			}
 			//备份芯片数据至SD
 			// erase all sectors

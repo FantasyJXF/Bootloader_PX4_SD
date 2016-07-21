@@ -79,7 +79,7 @@
 
 # define BOARD_TYPE                     9
 # define _FLASH_KBYTES                  (*(uint16_t *)0x1fff7a22)
-# define BOARD_FLASH_SECTORS            ((_FLASH_KBYTES == 0x400) ? 11 : 23)
+# define BOARD_FLASH_SECTORS            ((_FLASH_KBYTES == 0x400) ? 10 : 22)   //共计24个sectors,由于前两个sectors用于BL,故需要操作的为22个sectors
 # define BOARD_FLASH_SIZE               (_FLASH_KBYTES * 1024)
 
 # define OSC_FREQ                       24
